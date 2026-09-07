@@ -1,0 +1,52 @@
+[package]
+name = "saddle-stitcher"
+version = "0.1.0"
+edition = "2024"
+# tray feature のシングルインスタンス化 (`src/single_instance.rs`) が使う
+# `std::fs::File::try_lock` は Rust 1.89 で安定化された。tray を使わない場合は
+# より古い Rust でも動く可能性があるが、feature 単位で MSRV を分けられないため
+# パッケージ全体をこの値にしている。
+rust-version = "1.89"
+
+# タスクトレイ常駐モード (任意)。`create-rustvelte --tray` で有効化した場合のみ
+# [features] の default に `tray` が加わる (このテンプレート自体は既定で無効)。
+# Linux でこの feature をビルドするには gtk3/libxdo/libayatana-appindicator の
+# 開発パッケージが必要 (`.github/workflows/ci.yml` は apt-get で自動インストールする)。
+# シングルインスタンス化 (`src/single_instance.rs`) は std::fs::File::try_lock
+# (Rust 1.89 で安定化) を使うため、専用の依存クレートは不要。
+# auto-launch は「ログイン時に起動」トグル (`src/autostart.rs`) 用。
+[features]
+default = []
+tray = ["dep:tao", "dep:tray-icon", "dep:open", "dep:windows", "dep:auto-launch"]
+
+[dependencies]
+auto-launch = { version = "0.6.0", optional = true }
+axum = "0.8.9"
+directories = "6.0.0"
+mime_guess = "2.0.5"
+open = { version = "5.4.3", optional = true }
+rust-embed = "8.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+tao = { version = "0.37.0", optional = true }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "macros"] }
+toml = "1.1.5"
+tower-http = { version = "0.7.1", features = ["compression-gzip", "trace"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tray-icon = { version = "0.24.2", optional = true }
+utoipa = { version = "5.5.0", features = ["axum_extras"] }
+utoipa-axum = "0.2.0"
+
+# `tray` feature でのみ使う (Windows でタスクトレイ常駐時にコンソールを切り離すため)。
+# 非 Windows ターゲットではこの依存自体が存在しないため、`tray` feature の
+# `dep:windows` は無視される。
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Console"], optional = true }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+serde_json = "1.0.151"
+tower = { version = "0.5.3", default-features = false, features = ["util"] }

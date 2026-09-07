@@ -1,0 +1,27 @@
+# saddle-stitcher の設定ファイルサンプル。
+#
+# 実行時に読みに行く場所:
+#   - 環境変数 SADDLE_STITCHER_HOME が設定されていれば $SADDLE_STITCHER_HOME/config.toml
+#     (DB・ログも同じディレクトリ直下に置かれる。Docker / systemd 向け)
+#   - それ以外は OS 標準のアプリデータディレクトリ (directories::ProjectDirs)
+#     - macOS:   ~/Library/Application Support/com.amiiby.saddle-stitcher/config.toml
+#     - Linux:   ~/.config/saddle-stitcher/config.toml
+#     - Windows: %APPDATA%\example\saddle-stitcher\config\config.toml
+# ファイルが存在しない場合はここに示す値がそのままデフォルトとして使われる。
+
+[server]
+# 既定では自分自身からのみ待ち受ける。LAN 上の他端末等から使う場合は
+# "0.0.0.0" 等に変更する。
+bind = "127.0.0.1"
+port = 3000
+
+[log]
+# tracing-subscriber の EnvFilter 書式。環境変数 RUST_LOG があればそちらを優先する。
+filter = "saddle_stitcher=debug,tower_http=debug"
+# "stdout" | "file"
+# file の場合の出力先 (日次ローテーション: saddle-stitcher.log.YYYY-MM-DD、日付は UTC):
+#   - SADDLE_STITCHER_HOME 設定時: $SADDLE_STITCHER_HOME/logs/
+#   - macOS:   ~/Library/Application Support/com.amiiby.saddle-stitcher/logs/
+#   - Linux:   ~/.local/share/saddle-stitcher/logs/
+#   - Windows: %LOCALAPPDATA%\example\saddle-stitcher\data\logs\
+output = "stdout"

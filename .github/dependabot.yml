@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # sqlx は 0.8 系に固定している。0.x系は minor の繰り上がりも破壊的変更を意味しうるため、
+      # semver-minor も合わせて無視し patch 更新のみ自動PR化する
+      # (固定バージョンを上げる場合は手動で Cargo.toml を更新すること)。
+      - dependency-name: "sqlx"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

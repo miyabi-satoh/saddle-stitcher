@@ -1,0 +1,16 @@
+*.local.*
+.DS_Store
+
+# ローカル実行時のデータ (SADDLE_STITCHER_HOME=data のように使う場合用)
+/data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ローカル設定の上書き用 (各自の環境変数等)
+.env
+
+# Added by cargo
+
+/target

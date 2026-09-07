@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # `tray` feature (タスクトレイ常駐モード) が使う tao/tray-icon の Linux ビルドに必要。
+      # feature 自体は既定で無効な場合もあるが、`create-rustvelte --tray` で有効化した
+      # プロジェクトでもこの CI 定義がそのまま使えるよう、無条件にインストールしておく。
+      - name: Install Linux system dependencies (tray feature)
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # vitest の client プロジェクトが playwright(chromium) 上でコンポーネントテストを実行するため
+      - name: Install Playwright browser (chromium)
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      # フォーマット→lint→型検査→test→build (Makefile の `ci` ターゲットと同じ一連のチェック)
+      - name: Run CI checks
+        run: make ci

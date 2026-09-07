@@ -110,7 +110,7 @@ pub fn saddle_stitch(input: &[u8], direction: Direction) -> Result<Vec<u8>, Sadd
     // Form XObject 化してそのまま配置するだけでは回転が失われ、向きが崩れた出力になって
     // しまうため、回転が指定されたページは (誤った出力を返すより) 明示的に非対応として弾く。
     for &page_id in &page_ids {
-        if rotation_of(&doc, page_id) != 0 {
+        if rotation_of(&doc, page_id) != Ok(0) {
             return Err(SaddleStitchError::UnsupportedRotation);
         }
     }
@@ -190,20 +190,39 @@ fn media_box_of(doc: &Document, page_id: ObjectId) -> Result<[f32; 4], SaddleSti
     Err(SaddleStitchError::MissingMediaBox)
 }
 
-/// ページの `/Rotate` を親 `Pages` ノードからの継承込みで解決する。無ければ `0`。
-/// 0/90/180/270 のいずれかに正規化して返す。
-fn rotation_of(doc: &Document, page_id: ObjectId) -> i64 {
+/// ページの `/Rotate` を親 `Pages` ノードからの継承・間接参照込みで解決する。
+/// 見つからなければ `Ok(0)`。値を辿れない・数値として解釈できない等、安全に判定
+/// できない場合は `Err(())` を返す (呼び出し側で「回転あり」と同じく拒否する。
+/// 間接参照を無視して回転なし扱いにすると、まさに防ぎたい向き崩れを見逃すため)。
+fn rotation_of(doc: &Document, page_id: ObjectId) -> Result<i64, ()> {
+    fn as_rotation(obj: &Object) -> Option<i64> {
+        obj.as_i64()
+            .ok()
+            .or_else(|| obj.as_float().ok().map(|v| v as i64))
+    }
+
     let mut current = Some(page_id);
     while let Some(id) = current {
-        let Ok(dict) = doc.get_dictionary(id) else {
-            break;
-        };
-        if let Ok(value) = dict.get(b"Rotate").and_then(Object::as_i64) {
-            return value.rem_euclid(360);
+        let dict = doc.get_dictionary(id).map_err(|_| ())?;
+        match dict.get(b"Rotate") {
+            Ok(Object::Reference(ref_id)) => {
+                let value = doc
+                    .get_object(*ref_id)
+                    .ok()
+                    .and_then(as_rotation)
+                    .ok_or(())?;
+                return Ok(value.rem_euclid(360));
+            }
+            Ok(obj) => {
+                let value = as_rotation(obj).ok_or(())?;
+                return Ok(value.rem_euclid(360));
+            }
+            Err(_) => {
+                current = dict.get(b"Parent").and_then(Object::as_reference).ok();
+            }
         }
-        current = dict.get(b"Parent").and_then(Object::as_reference).ok();
     }
-    0
+    Ok(0)
 }
 
 /// 1ページ分の内容を Form XObject 化する。継承されたリソースも含めて引き継ぐ。
@@ -233,35 +252,36 @@ fn form_xobject_from_page(
     Ok(doc.add_object(stream))
 }
 
-/// ページの `Resources` を解決する。`Document::get_page_resources` は、ページ自身に
-/// 辞書が直書きされている場合の値と、間接参照 (`/Resources 12 0 R` のような一般的な形。
-/// 自身の分・親 `Pages` ノードからの継承分の両方を含む) の一覧を別々に返す。
-/// 直書き分を優先しつつ、間接参照側もトップレベルキー単位でマージする
-/// (現実のPDFのほとんどはResourcesを間接参照で持つため、間接参照を無視すると
-/// フォントや画像を解決できず内容が消える)。
+/// ページの `Resources` を解決する。`Resources` は `MediaBox` と同様、ページ自身に
+/// 無ければ親 `Pages` ノードから継承する属性 (= 最も近い階層のものを1つ使う。複数階層を
+/// マージするものではない)。かつ値は直書きの辞書・間接参照 (`/Resources 12 0 R`、
+/// 現実のPDFで最も一般的な形) のどちらも取り得る。
+///
+/// `Document::get_page_resources` はこの2軸のうち一部の組み合わせしか拾えない
+/// (ページ自身の直書きと、各階層の間接参照は拾えるが、親ノードに直書きされた
+/// `Resources` は拾えない) ため、`media_box_of`/`rotation_of` と同じ要領で
+/// Parent チェーンを自前で辿る。
 fn page_resources(doc: &Document, page_id: ObjectId) -> Dictionary {
-    let mut merged = Dictionary::new();
-    let Ok((inline_dict, indirect_ids)) = doc.get_page_resources(page_id) else {
-        return merged;
-    };
-    if let Some(dict) = inline_dict {
-        merge_missing_keys(&mut merged, dict);
-    }
-    for id in indirect_ids {
-        if let Ok(dict) = doc.get_dictionary(id) {
-            merge_missing_keys(&mut merged, dict);
+    let mut current = Some(page_id);
+    while let Some(id) = current {
+        let Ok(dict) = doc.get_dictionary(id) else {
+            break;
+        };
+        if let Some(resources) = resolve_resources_entry(doc, dict) {
+            return resources;
         }
+        current = dict.get(b"Parent").and_then(Object::as_reference).ok();
     }
-    merged
+    Dictionary::new()
 }
 
-/// `source` のキーのうち `target` にまだ無いものだけをコピーする
-/// (先に入れた側 = より優先度の高い側を上書きしない)。
-fn merge_missing_keys(target: &mut Dictionary, source: &Dictionary) {
-    for (key, value) in source.iter() {
-        if !target.has(key) {
-            target.set(key.clone(), value.clone());
-        }
+/// 1階層分の `Resources` エントリを解決する。直書き辞書ならそのまま、間接参照なら
+/// 参照先を解決して返す。キー自体が無い・型が不正な場合は `None`。
+fn resolve_resources_entry(doc: &Document, dict: &Dictionary) -> Option<Dictionary> {
+    match dict.get(b"Resources") {
+        Ok(Object::Dictionary(inline)) => Some(inline.clone()),
+        Ok(Object::Reference(id)) => doc.get_dictionary(*id).ok().cloned(),
+        _ => None,
     }
 }
 
@@ -475,7 +495,115 @@ mod tests {
 
         let output = saddle_stitch(&input, Direction::Left).expect("saddle_stitch should succeed");
 
-        let out_doc = Document::load_mem(&output).expect("output should be a valid PDF");
+        assert_form_resources_have_font(&output);
+    }
+
+    #[test]
+    fn resolves_resources_inherited_as_inline_dict_on_parent() {
+        // ページ自身は Resources を持たず、親 Pages ノードに直書きされたものを継承する
+        // (lopdf の get_page_resources() が拾い漏らす組み合わせ)。
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 24.into()]),
+                Operation::new("Td", vec![72.into(), 700.into()]),
+                Operation::new("Tj", vec![Object::string_literal("inherited inline")]),
+                Operation::new("ET", vec![]),
+            ],
+        }
+        .encode()
+        .unwrap();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+                "Resources" => dictionary! {
+                    "Font" => dictionary! {
+                        "F1" => dictionary! {
+                            "Type" => "Font",
+                            "Subtype" => "Type1",
+                            "BaseFont" => "Helvetica",
+                        },
+                    },
+                },
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let output = saddle_stitch(&input, Direction::Left).expect("saddle_stitch should succeed");
+
+        assert_form_resources_have_font(&output);
+    }
+
+    #[test]
+    fn resolves_resources_inherited_as_indirect_reference_on_parent() {
+        // ページ自身は Resources を持たず、親 Pages ノードが間接参照で持つものを継承する。
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 24.into()]),
+                Operation::new("Td", vec![72.into(), 700.into()]),
+                Operation::new("Tj", vec![Object::string_literal("inherited indirect")]),
+                Operation::new("ET", vec![]),
+            ],
+        }
+        .encode()
+        .unwrap();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content));
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                },
+            },
+        });
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+                "Resources" => resources_id,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let output = saddle_stitch(&input, Direction::Left).expect("saddle_stitch should succeed");
+
+        assert_form_resources_have_font(&output);
+    }
+
+    /// 生成された見開きPDFの1ページ目を辿り、Form XObjectのResourcesにFontが
+    /// 引き継がれていることを確認する (Resources解決の各テストで共有)。
+    fn assert_form_resources_have_font(output: &[u8]) {
+        let out_doc = Document::load_mem(output).expect("output should be a valid PDF");
         let (_, spread_page_id) = out_doc.get_pages().into_iter().next().unwrap();
         let (resources, _) = out_doc.get_page_resources(spread_page_id).unwrap();
         let xobjects = resources
@@ -497,8 +625,43 @@ mod tests {
             .expect("Form XObject should carry Resources");
         assert!(
             form_resources.has(b"Font"),
-            "間接参照だったFontがForm XObjectのResourcesに引き継がれているべき"
+            "継承/間接参照だったFontがForm XObjectのResourcesに引き継がれているべき"
         );
+    }
+
+    #[test]
+    fn rejects_pages_with_indirect_rotate() {
+        // /Rotate 自体が間接参照 (`/Rotate 12 0 R`) の場合も解決して拒否できること。
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), b"BT ET".to_vec()));
+        let rotate_id = doc.add_object(Object::Integer(90));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Rotate" => rotate_id,
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let result = saddle_stitch(&input, Direction::Left);
+
+        assert!(matches!(
+            result,
+            Err(SaddleStitchError::UnsupportedRotation)
+        ));
     }
 
     #[test]

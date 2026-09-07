@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod logging;
+pub mod pdf;
 pub mod state;
 pub mod static_files;
 

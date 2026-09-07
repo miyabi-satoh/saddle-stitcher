@@ -195,10 +195,20 @@ fn media_box_of(doc: &Document, page_id: ObjectId) -> Result<[f32; 4], SaddleSti
 /// できない場合は `Err(())` を返す (呼び出し側で「回転あり」と同じく拒否する。
 /// 間接参照を無視して回転なし扱いにすると、まさに防ぎたい向き崩れを見逃すため)。
 fn rotation_of(doc: &Document, page_id: ObjectId) -> Result<i64, ()> {
+    // 仕様上 `/Rotate` は90の倍数のはず。小数を素朴に `as i64` で切り捨てると
+    // (例: 0.5 -> 0) 本来なら安全側で弾きたい非準拠の値を「回転なし」として
+    // 見逃してしまうため、90の倍数として解釈できる値だけを受理する。
     fn as_rotation(obj: &Object) -> Option<i64> {
-        obj.as_i64()
-            .ok()
-            .or_else(|| obj.as_float().ok().map(|v| v as i64))
+        let value = if let Ok(v) = obj.as_i64() {
+            v
+        } else {
+            let f = obj.as_float().ok()?;
+            if f.fract() != 0.0 {
+                return None;
+            }
+            f as i64
+        };
+        (value % 90 == 0).then_some(value)
     }
 
     let mut current = Some(page_id);
@@ -641,6 +651,41 @@ mod tests {
             "Parent" => pages_id,
             "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
             "Rotate" => rotate_id,
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let result = saddle_stitch(&input, Direction::Left);
+
+        assert!(matches!(
+            result,
+            Err(SaddleStitchError::UnsupportedRotation)
+        ));
+    }
+
+    #[test]
+    fn rejects_pages_with_non_multiple_of_ninety_rotate() {
+        // /Rotate は仕様上90の倍数のはず。0.5 のような非準拠の小数値を素朴に
+        // `as i64` すると 0 (回転なし) になってしまうため、そのまま通さず拒否する。
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), b"BT ET".to_vec()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Rotate" => 0.5,
             "Contents" => content_id,
         });
         doc.objects.insert(

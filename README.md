@@ -2,13 +2,41 @@ English | [日本語](./README.ja.md)
 
 # saddle-stitcher
 
-A minimal starter template that provides only the "wiring" for a Rust (axum) backend that
-embeds and serves a SvelteKit (SPA) frontend as a single binary.
+A tool that turns an A4 PDF into an A3 spread PDF laid out for double-sided saddle-stitch
+booklet printing. A refactor of
+[Tauri-NextTS-SaddleStitcher](https://github.com/miyabi-satoh/Tauri-NextTS-SaddleStitcher)
+(Tauri + Next.js + Python/PyPDF2) using
+[rustvelte](https://github.com/miyabi-satoh/rustvelte) (a starter that embeds an axum
+backend and a SvelteKit frontend into a single binary).
 
-Domain-leaning features such as authentication, DB schema, and UI component libraries are
-intentionally left out. The initial state of this project is meant to be a foundation you
-can start from without hesitation once you think "I want to start using a DB in the
-backend" or "I want to add Tailwind or a UI kit to the frontend."
+## Changes from the old Tauri-NextTS-SaddleStitcher
+
+- The page-reordering and spread-merging logic moved from Python (PyPDF2) to native Rust
+  ([lopdf](https://crates.io/crates/lopdf)). The old first-run setup dance (creating a
+  Python venv and `pip install`ing `wheel`/`PyPDF2`/`pycryptodome`) is gone entirely
+- File I/O moved from Tauri's native file dialogs to a plain browser `<input type="file">`
+  upload plus a browser download. The "open the file after converting" checkbox was
+  dropped as a result (what happens after a browser download is up to the browser/OS)
+- Encrypted PDFs that decrypt with an empty password are handled automatically by lopdf,
+  so the cases that used to require `pycryptodome` now need no extra package. PDFs that
+  need an actual (non-empty) password are still unsupported (they were effectively
+  unsupported in the old version too)
+- Assumes every page is the same size (the first page's `MediaBox` is reused for the whole
+  document). The page-reordering algorithm itself is a verbatim port of the old
+  `SaddleStitcher.py`; its correctness was not re-verified or "fixed" (the old README
+  itself notes that the right-open page order was never confirmed)
+
+## Usage
+
+Start the server with `make run` (or the distributed binary) and open
+`http://127.0.0.1:3000` in a browser. Pick a PDF file and an open direction (left/right),
+click "convert", and the saddle-stitch-layout PDF downloads.
+
+The rustvelte template this project started from provides only the "wiring" for an axum
+backend that embeds and serves a SvelteKit frontend as a single binary. Domain-leaning
+features such as authentication and UI component libraries are intentionally left out (and
+unused here too). The DB (SQLite/sqlx) connection groundwork from the template is still
+present but unused by this app.
 
 ## Tech stack
 
@@ -21,8 +49,8 @@ backend" or "I want to add Tailwind or a UI kit to the frontend."
     `directories`; overridable with `SADDLE_STITCHER_HOME`)
   - Logging: tracing (stdout, or daily-rotated files)
   - Error format: a common `{"error":{"code","message"}}` envelope (`src/error.rs`)
-  - OpenAPI spec generation: utoipa (`saddle-stitcher --openapi`). Currently only
-    `/api/v1/health`
+  - OpenAPI spec generation: utoipa (`saddle-stitcher --openapi`). `/api/v1/health` and
+    `/api/v1/saddle-stitch` (the PDF conversion itself)
   - The frontend build output is embedded via rust-embed and served as a single binary
 - Frontend: a bare-bones setup equivalent to `sv create` (SvelteKit) + TypeScript +
   adapter-static (SPA)
@@ -111,7 +139,8 @@ The config file (`config.toml`), DB, and logs live in the following locations.
 If `config.toml` is absent, the app starts with its defaults. See `config.example.toml` for
 config options and defaults.
 
-- `[server]` `bind` / `port` (default: `127.0.0.1:3000`)
+- `[server]` `bind` / `port` (default: `127.0.0.1:3000`) / `max_upload_bytes` (max PDF
+  upload size, default: 200MiB)
 - `[log]` `filter` (tracing `EnvFilter` syntax; `RUST_LOG` takes precedence if set) /
   `output` (`stdout` | `file`)
 
@@ -122,6 +151,11 @@ changing the API, regenerate and commit `openapi.json` and
 `frontend/src/lib/api/schema.d.ts` with `make api-types`.
 
 Errors are always returned as `{"error":{"code":"...","message":"..."}}`.
+
+- `POST /api/v1/saddle-stitch` (`multipart/form-data`: `file`=PDF, `direction`=`left`|`right`)
+  — returns the converted PDF as binary (the Japanese filename lives in
+  `Content-Disposition`'s `filename*=UTF-8''...`). Default upload limit is 200MiB
+  (change via `config.toml`'s `[server] max_upload_bytes`)
 
 ## Other commands
 

@@ -29,7 +29,15 @@ pub enum SaddleStitchError {
     MissingMediaBox,
     #[error("PDFの書き出しに失敗しました")]
     Save(#[from] std::io::Error),
+    #[error("回転(Rotate)が指定されたページには対応していません")]
+    UnsupportedRotation,
+    #[error("ページの内容が大きすぎます (展開後 {max_bytes} バイト超)")]
+    ContentTooLarge { max_bytes: usize },
 }
+
+/// 1ページあたりのコンテンツストリーム展開後サイズの上限。展開爆弾
+/// (小さい圧縮データが巨大な展開結果になる攻撃) を防ぐための保険。
+const MAX_PAGE_CONTENT_BYTES: usize = 100 * 1024 * 1024;
 
 /// `SaddleStitcher.py` の `new_page_index()` の移植。
 ///
@@ -94,6 +102,18 @@ pub fn saddle_stitch(input: &[u8], direction: Direction) -> Result<Vec<u8>, Sadd
     let media_box = media_box_of(&doc, page_ids[0])?;
     let page_width = media_box[2] - media_box[0];
     let page_height = media_box[3] - media_box[1];
+    // MediaBox の原点 (llx, lly) が (0, 0) でない場合、Form XObject を配置する際に
+    // その分を打ち消す平行移動を加えないと内容がずれる。
+    let origin = (media_box[0], media_box[1]);
+
+    // `/Rotate` は表示時にビューアが適用する属性で、コンテンツストリームには反映されない。
+    // Form XObject 化してそのまま配置するだけでは回転が失われ、向きが崩れた出力になって
+    // しまうため、回転が指定されたページは (誤った出力を返すより) 明示的に非対応として弾く。
+    for &page_id in &page_ids {
+        if rotation_of(&doc, page_id) != 0 {
+            return Err(SaddleStitchError::UnsupportedRotation);
+        }
+    }
 
     // 各実ページを Form XObject 化しておく (内容はそのまま、配置だけを新しいページで行う)。
     let form_ids: Vec<ObjectId> = page_ids
@@ -110,7 +130,15 @@ pub fn saddle_stitch(input: &[u8], direction: Direction) -> Result<Vec<u8>, Sadd
     for pair in order.chunks(2) {
         let left = pair[0].map(|i| form_ids[i]);
         let right = pair[1].map(|i| form_ids[i]);
-        let spread_id = new_spread_page(&mut doc, pages_id, page_width, page_height, left, right);
+        let spread_id = new_spread_page(
+            &mut doc,
+            pages_id,
+            page_width,
+            page_height,
+            origin,
+            left,
+            right,
+        );
         spread_ids.push(spread_id);
     }
 
@@ -162,13 +190,33 @@ fn media_box_of(doc: &Document, page_id: ObjectId) -> Result<[f32; 4], SaddleSti
     Err(SaddleStitchError::MissingMediaBox)
 }
 
+/// ページの `/Rotate` を親 `Pages` ノードからの継承込みで解決する。無ければ `0`。
+/// 0/90/180/270 のいずれかに正規化して返す。
+fn rotation_of(doc: &Document, page_id: ObjectId) -> i64 {
+    let mut current = Some(page_id);
+    while let Some(id) = current {
+        let Ok(dict) = doc.get_dictionary(id) else {
+            break;
+        };
+        if let Ok(value) = dict.get(b"Rotate").and_then(Object::as_i64) {
+            return value.rem_euclid(360);
+        }
+        current = dict.get(b"Parent").and_then(Object::as_reference).ok();
+    }
+    0
+}
+
 /// 1ページ分の内容を Form XObject 化する。継承されたリソースも含めて引き継ぐ。
 fn form_xobject_from_page(
     doc: &mut Document,
     page_id: ObjectId,
     media_box: [f32; 4],
 ) -> Result<ObjectId, SaddleStitchError> {
-    let content = doc.get_page_content(page_id);
+    let content = doc
+        .get_page_content_with_limit(page_id, MAX_PAGE_CONTENT_BYTES)
+        .map_err(|_| SaddleStitchError::ContentTooLarge {
+            max_bytes: MAX_PAGE_CONTENT_BYTES,
+        })?;
 
     let resources = page_resources(doc, page_id);
 
@@ -185,11 +233,35 @@ fn form_xobject_from_page(
     Ok(doc.add_object(stream))
 }
 
-/// ページの `Resources` を継承分も合わせて解決する。見つからなければ空の辞書を返す。
+/// ページの `Resources` を解決する。`Document::get_page_resources` は、ページ自身に
+/// 辞書が直書きされている場合の値と、間接参照 (`/Resources 12 0 R` のような一般的な形。
+/// 自身の分・親 `Pages` ノードからの継承分の両方を含む) の一覧を別々に返す。
+/// 直書き分を優先しつつ、間接参照側もトップレベルキー単位でマージする
+/// (現実のPDFのほとんどはResourcesを間接参照で持つため、間接参照を無視すると
+/// フォントや画像を解決できず内容が消える)。
 fn page_resources(doc: &Document, page_id: ObjectId) -> Dictionary {
-    match doc.get_page_resources(page_id) {
-        Ok((Some(dict), _inherited)) => dict.clone(),
-        Ok((None, _)) | Err(_) => Dictionary::new(),
+    let mut merged = Dictionary::new();
+    let Ok((inline_dict, indirect_ids)) = doc.get_page_resources(page_id) else {
+        return merged;
+    };
+    if let Some(dict) = inline_dict {
+        merge_missing_keys(&mut merged, dict);
+    }
+    for id in indirect_ids {
+        if let Ok(dict) = doc.get_dictionary(id) {
+            merge_missing_keys(&mut merged, dict);
+        }
+    }
+    merged
+}
+
+/// `source` のキーのうち `target` にまだ無いものだけをコピーする
+/// (先に入れた側 = より優先度の高い側を上書きしない)。
+fn merge_missing_keys(target: &mut Dictionary, source: &Dictionary) {
+    for (key, value) in source.iter() {
+        if !target.has(key) {
+            target.set(key.clone(), value.clone());
+        }
     }
 }
 
@@ -200,22 +272,26 @@ fn new_spread_page(
     parent: ObjectId,
     page_width: f32,
     page_height: f32,
+    origin: (f32, f32),
     left: Option<ObjectId>,
     right: Option<ObjectId>,
 ) -> ObjectId {
     let mut resources = Dictionary::new();
     let mut xobjects = Dictionary::new();
     let mut operations = Vec::new();
+    // Form XObject の BBox は元の MediaBox (原点が (0,0) とは限らない) をそのまま使っている
+    // ため、配置先の角に BBox の左下角 (origin) が来るよう平行移動を打ち消す。
+    let (origin_x, origin_y) = origin;
 
     if let Some(id) = left {
         let name = format!("X{}", id.0);
         xobjects.set(name.clone(), Object::Reference(id));
-        push_placement(&mut operations, &name, 0.0, 0.0);
+        push_placement(&mut operations, &name, -origin_x, -origin_y);
     }
     if let Some(id) = right {
         let name = format!("X{}", id.0);
         xobjects.set(name.clone(), Object::Reference(id));
-        push_placement(&mut operations, &name, page_width, 0.0);
+        push_placement(&mut operations, &name, page_width - origin_x, -origin_y);
     }
     resources.set("XObject", xobjects);
 
@@ -347,6 +423,115 @@ mod tests {
         let out_doc = Document::load_mem(&output).expect("output should be a valid PDF");
         // 5ページ -> 8ページ分に空白パディング -> 4見開き
         assert_eq!(out_doc.get_pages().len(), 4);
+    }
+
+    #[test]
+    fn resolves_resources_stored_as_indirect_reference() {
+        // 現実のPDFのほとんどは /Resources を間接参照 (`12 0 R`) で持つ。
+        // ページ自身に辞書を直書きした sample_pdf() とは別に、間接参照のケースを作る。
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 24.into()]),
+                Operation::new("Td", vec![72.into(), 700.into()]),
+                Operation::new("Tj", vec![Object::string_literal("indirect resources")]),
+                Operation::new("ET", vec![]),
+            ],
+        }
+        .encode()
+        .unwrap();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), content));
+        // Resources を間接オブジェクトとして先に登録し、ページからは参照だけを持たせる。
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                },
+            },
+        });
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Resources" => resources_id,
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let output = saddle_stitch(&input, Direction::Left).expect("saddle_stitch should succeed");
+
+        let out_doc = Document::load_mem(&output).expect("output should be a valid PDF");
+        let (_, spread_page_id) = out_doc.get_pages().into_iter().next().unwrap();
+        let (resources, _) = out_doc.get_page_resources(spread_page_id).unwrap();
+        let xobjects = resources
+            .expect("spread page should have Resources")
+            .get(b"XObject")
+            .and_then(Object::as_dict)
+            .expect("should have an XObject dict");
+        let (_, form_ref) = xobjects.iter().next().expect("should have one XObject");
+        let form_id = form_ref.as_reference().unwrap();
+        let form_dict = &out_doc
+            .get_object(form_id)
+            .unwrap()
+            .as_stream()
+            .unwrap()
+            .dict;
+        let form_resources = form_dict
+            .get(b"Resources")
+            .and_then(Object::as_dict)
+            .expect("Form XObject should carry Resources");
+        assert!(
+            form_resources.has(b"Font"),
+            "間接参照だったFontがForm XObjectのResourcesに引き継がれているべき"
+        );
+    }
+
+    #[test]
+    fn rejects_pages_with_rotate() {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Stream::new(Dictionary::new(), b"BT ET".to_vec()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+            "Rotate" => 90,
+            "Contents" => content_id,
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Count" => 1,
+                "Kids" => vec![Object::Reference(page_id)],
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        let mut input = Vec::new();
+        doc.save_to(&mut input).unwrap();
+
+        let result = saddle_stitch(&input, Direction::Left);
+
+        assert!(matches!(
+            result,
+            Err(SaddleStitchError::UnsupportedRotation)
+        ));
     }
 
     #[test]

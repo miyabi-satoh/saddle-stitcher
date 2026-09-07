@@ -137,9 +137,11 @@ const RFC5987_ATTR_CHAR: &AsciiSet = &CONTROLS
     .add(b'}');
 
 fn content_disposition(filename: &str) -> String {
+    // `filename="..."` は quoted-string なので、`"` や `\` が残っていると壊れる
+    // (エスケープする代わりに、フォールバック用途と割り切って単純に取り除く)。
     let ascii_fallback: String = filename
         .chars()
-        .filter(|c| c.is_ascii() && !c.is_ascii_control())
+        .filter(|c| c.is_ascii() && !c.is_ascii_control() && *c != '"' && *c != '\\')
         .collect();
     let ascii_fallback = if ascii_fallback.is_empty() {
         "output.pdf".to_string()
@@ -152,4 +154,33 @@ fn content_disposition(filename: &str) -> String {
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(convert))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_disposition_ascii_fallback_strips_quote_and_backslash() {
+        // `"` や `\` を含むファイル名がそのまま filename="..." に入ると
+        // quoted-string として壊れてしまうため、取り除かれていることを確認する。
+        let header = content_disposition("a\"b\\c.pdf");
+
+        let part = header
+            .split(';')
+            .find(|part| part.trim_start().starts_with("filename=\""))
+            .expect("should contain filename=\"...\"");
+        let value = part
+            .trim_start()
+            .trim_start_matches("filename=\"")
+            .trim_end_matches('"');
+        assert!(!value.contains('"'), "{value}");
+        assert!(!value.contains('\\'), "{value}");
+    }
+
+    #[test]
+    fn content_disposition_includes_rfc5987_encoded_filename() {
+        let header = content_disposition("(製本版)テスト.pdf");
+        assert!(header.contains("filename*=UTF-8''"));
+    }
 }

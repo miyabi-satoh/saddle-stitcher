@@ -2,12 +2,44 @@
 
 # saddle-stitcher
 
-Rust (axum) の backend が SvelteKit (SPA) の frontend を単一バイナリに埋め込んで配信する、
-という「配線」だけを揃えた最小スターターテンプレート。
+A4 サイズの PDF から、両面印刷で中綴じ製本できる A3 見開き PDF を作るツール。
+[Tauri-NextTS-SaddleStitcher](https://github.com/miyabi-satoh/Tauri-NextTS-SaddleStitcher)
+(Tauri + Next.js + Python/PyPDF2) を [rustvelte](https://github.com/miyabi-satoh/rustvelte)
+(axum + SvelteKit を単一バイナリに埋め込むテンプレート) でリファクタしたもの。
 
-認証・DB スキーマ・UI コンポーネントライブラリ等のドメイン寄りの機能は意図的に含めていない。
-「backend で DB を使い始めたい」「frontend に Tailwind や UI キットを足したい」と思った時に
-迷わず始められるだけの土台、というのがこのプロジェクトの初期状態。
+## 旧版 (Tauri-NextTS-SaddleStitcher) からの変更点
+
+- PDF のページ並べ替え・見開き合成処理を Python (PyPDF2) から Rust ネイティブ
+  ([lopdf](https://crates.io/crates/lopdf)) に移植した。初回起動時に Python の venv を
+  作成して `pip install` する、というセットアップの手間が丸ごと無くなった
+  (`.venv`・`wheel`・`PyPDF2`・`pycryptodome` は不要)
+- Tauri のネイティブファイルダイアログではなく、ブラウザ標準の
+  `<input type="file">` によるアップロードと、ブラウザのダウンロード機能を使う方式に変更した。
+  これに伴い「変換後にファイルを開く」チェックボックスは廃止した (ブラウザのダウンロード後の
+  挙動はブラウザ・OS の設定に委ねる)
+- 空パスワードで復号できる暗号化 PDF は lopdf が自動的に復号するため、旧版で
+  `pycryptodome` が必要だったケースも追加パッケージなしで扱える。パスワード付き
+  (空パスワードで復号できない) PDF は非対応 (旧版でも実質未対応だった)
+- 全ページが同じサイズであることを前提とする (1ページ目の `MediaBox` を全体で使う)。
+  ページの並べ替えアルゴリズム自体は旧版の `SaddleStitcher.py` を一字一句忠実に移植して
+  おり、正しさの検証や修正は行っていない (旧 README にも「右開きのページ順は未確認」と
+  ある通り)
+- `/Rotate` (ページの表示回転) が指定されたPDFは非対応で、明示的にエラーを返す
+  (Form XObject化してそのまま配置する方式では回転を再現できず、黙って向きの崩れた
+  出力を返すよりは安全側に倒した)。1ページあたりのコンテンツ展開サイズにも上限
+  (100MiB) を設けている (圧縮爆弾対策)
+
+## 使い方
+
+`make run` (または配布されたバイナリ) でサーバーを起動し、ブラウザで
+`http://127.0.0.1:3000` を開く。PDF ファイルと開き方向 (左開き/右開き) を選んで
+「変換する」を押すと、中綴じ製本レイアウトの PDF がダウンロードされる。
+
+rustvelte テンプレートは Rust (axum) の backend が SvelteKit (SPA) の frontend を単一
+バイナリに埋め込んで配信する、という「配線」だけを揃えた最小スターターだった。
+認証・UI コンポーネントライブラリ等のドメイン寄りの機能は意図的に含めていない
+(このアプリでも使っていない)。DB (SQLite/sqlx) の接続基盤もテンプレート由来のまま
+残っているが、このアプリ自体は DB を使っていない。
 
 ## 技術スタック
 
@@ -19,7 +51,8 @@ Rust (axum) の backend が SvelteKit (SPA) の frontend を単一バイナリ�
     `SADDLE_STITCHER_HOME` で上書き可)
   - ロギング: tracing (stdout またはファイルへ日次ローテーション)
   - エラー形式: `{"error":{"code","message"}}` の共通 envelope (`src/error.rs`)
-  - OpenAPI 仕様生成: utoipa (`saddle-stitcher --openapi`)。今は `/api/v1/health` のみ
+  - OpenAPI 仕様生成: utoipa (`saddle-stitcher --openapi`)。`/api/v1/health` と
+    `/api/v1/saddle-stitch` (PDF 変換本体)
   - frontend ビルド成果物は rust-embed で埋め込み、単一バイナリとして配信
 - frontend: `sv create`(SvelteKit) 相当のまっさらな構成 + TypeScript + adapter-static(SPA)
   - 追加済み: prettier / eslint / vitest / playwright
@@ -104,7 +137,8 @@ cargo build --release --features tray
 
 `config.toml` が無ければ既定値で起動する。設定項目と既定値は `config.example.toml` を参照。
 
-- `[server]` `bind` / `port` (既定: `127.0.0.1:3000`)
+- `[server]` `bind` / `port` (既定: `127.0.0.1:3000`) / `max_upload_bytes`
+  (アップロード可能なPDFの最大バイト数、既定: 200MiB)
 - `[log]` `filter` (tracing EnvFilter 書式、`RUST_LOG` があれば優先) / `output` (`stdout` | `file`)
 
 ## API
@@ -113,6 +147,11 @@ cargo build --release --features tray
 `make api-types` で `openapi.json` と `frontend/src/lib/api/schema.d.ts` を再生成してコミットする。
 
 エラーは常に `{"error":{"code":"...","message":"..."}}` の形で返る。
+
+- `POST /api/v1/saddle-stitch` (`multipart/form-data`: `file`=PDF, `direction`=`left`|`right`) —
+  変換済み PDF をバイナリで返す (`Content-Disposition` の `filename*=UTF-8''...` に
+  日本語ファイル名を含む)。既定のアップロード上限は 200MiB
+  (`config.toml` の `[server] max_upload_bytes` で変更可)
 
 ## その他コマンド
 

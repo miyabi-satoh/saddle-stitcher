@@ -21,10 +21,12 @@ tray = ["dep:tao", "dep:tray-icon", "dep:open", "dep:windows", "dep:auto-launch"
 
 [dependencies]
 auto-launch = { version = "0.6.0", optional = true }
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["multipart"] }
 directories = "6.0.0"
+lopdf = "0.44.0"
 mime_guess = "2.0.5"
 open = { version = "5.4.3", optional = true }
+percent-encoding = "2.3.2"
 rust-embed = "8.12.0"
 serde = { version = "1.0.229", features = ["derive"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }

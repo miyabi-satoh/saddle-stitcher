@@ -31,6 +31,78 @@
           }
         }
       }
+    },
+    "/api/v1/saddle-stitch": {
+      "post": {
+        "operationId": "convert",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "description": "OpenAPI ドキュメント用のリクエストボディ定義。\n実際のリクエストは `axum::extract::Multipart` で受け取るため、このスキーマは\nドキュメント生成のためだけに存在する (ハンドラの引数には使わない)。",
+                "required": [
+                  "file",
+                  "direction"
+                ],
+                "properties": {
+                  "direction": {
+                    "type": "string",
+                    "description": "`\"left\"` (左開き) または `\"right\"` (右開き)"
+                  },
+                  "file": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "format": "int32",
+                      "minimum": 0
+                    },
+                    "contentMediaType": "application/pdf"
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "変換済みの中綴じ製本レイアウトPDF",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "リクエストが不正 (fileまたはdirectionが不足・不正)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "PDFとして処理できなかった (壊れている・パスワード付き等)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

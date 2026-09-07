@@ -30,6 +30,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: extractions/setup-just@v2
+
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
@@ -49,6 +51,40 @@ jobs:
         working-directory: frontend
         run: pnpm exec playwright install --with-deps chromium
 
-      # フォーマット→lint→型検査→test→build (Makefile の `ci` ターゲットと同じ一連のチェック)
+      # フォーマット→lint→型検査→test→build (justfile の `ci` レシピと同じ一連のチェック)
       - name: Run CI checks
-        run: make ci
+        run: just ci
+
+  ci-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser (chromium)
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run CI checks (Windows)
+        run: just ci

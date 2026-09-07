@@ -1,0 +1,4 @@
+# OS を問わずリポジトリ内のテキストファイルは LF に正規化する。
+# これが無いと Windows 上での checkout 時に core.autocrlf の設定次第で
+# CRLF に変換され、prettier --check 等の整形チェックが崩れて誤検知する。
+* text=auto eol=lf

@@ -31,7 +31,7 @@ A4 サイズの PDF から、両面印刷で中綴じ製本できる A3 見開�
 
 ## 使い方
 
-`make run` (または配布されたバイナリ) でサーバーを起動し、ブラウザで
+`just run` (または配布されたバイナリ) でサーバーを起動し、ブラウザで
 `http://127.0.0.1:3000` を開く。PDF ファイルと開き方向 (左開き/右開き) を選んで
 「変換する」を押すと、中綴じ製本レイアウトの PDF がダウンロードされる。
 
@@ -64,21 +64,21 @@ rustvelte テンプレートは Rust (axum) の backend が SvelteKit (SPA) の 
 ## セットアップ
 
 ```sh
-make install   # frontend の依存関係をインストール (pnpm)
+just install   # frontend の依存関係をインストール (pnpm)
 ```
 
 ## 開発
 
 ```sh
-make dev-backend   # backend を起動 (:3000, 初回のみ frontend をビルド)
-make dev-frontend  # frontend を HMR 付きで起動 (/api は backend にプロキシ)
+just dev-backend   # backend を起動 (:3000, 初回のみ frontend をビルド)
+just dev-frontend  # frontend を HMR 付きで起動 (/api は backend にプロキシ)
 ```
 
 ## ビルド・実行
 
 ```sh
-make build  # frontend をビルドしてから release バイナリをビルド
-make run    # build してバイナリを起動
+just build  # frontend をビルドしてから release バイナリをビルド
+just run    # build してバイナリを起動
 ```
 
 ## CLI
@@ -144,7 +144,7 @@ cargo build --release --features tray
 ## API
 
 `/api/v1` 配下。仕様は `openapi.json` (コミット対象) を参照。API を変更したら
-`make api-types` で `openapi.json` と `frontend/src/lib/api/schema.d.ts` を再生成してコミットする。
+`just api-types` で `openapi.json` と `frontend/src/lib/api/schema.d.ts` を再生成してコミットする。
 
 エラーは常に `{"error":{"code":"...","message":"..."}}` の形で返る。
 
@@ -156,17 +156,17 @@ cargo build --release --features tray
 ## その他コマンド
 
 ```sh
-make openapi    # openapi.json を生成
-make api-types  # openapi.json から frontend 用の TypeScript 型を生成
-make fmt        # コード整形 (cargo fmt + prettier)
-make lint       # Lint (clippy + eslint/prettier check)
-make check      # 型検査 (cargo check + svelte-check)
-make test       # テスト実行 (cargo test + vitest)
-make ci         # fmt-check → lint → check → test → build を一括実行
-make clean      # ビルド成果物を削除
+just openapi    # openapi.json を生成
+just api-types  # openapi.json から frontend 用の TypeScript 型を生成
+just fmt        # コード整形 (cargo fmt + prettier)
+just lint       # Lint (clippy + eslint/prettier check)
+just check      # 型検査 (cargo check + svelte-check)
+just test       # テスト実行 (cargo test + vitest)
+just ci         # fmt-check → lint → check → test → build を一括実行
+just clean      # ビルド成果物を削除
 ```
 
-コマンド一覧は `make help` でも確認できる。
+コマンド一覧は `just --list` でも確認できる。
 
 ## このテンプレートに含まれないもの (スコープ外)
 

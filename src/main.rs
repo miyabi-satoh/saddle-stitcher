@@ -69,7 +69,7 @@ fn main() {
                 .await
                 .unwrap_or_else(|err| exit_with_error(&err));
             tracing::info!(db_path = %db_path.display(), "データベースに接続しました");
-            saddle_stitcher::build_app(pool)
+            saddle_stitcher::build_app(pool, config.server.max_upload_bytes)
         })
     };
 

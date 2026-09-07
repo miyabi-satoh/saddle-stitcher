@@ -28,6 +28,17 @@ pub enum AppError {
     /// にならないため、`AppPath` 経由でここに変換する。
     #[error("{message}")]
     InvalidPath { status: StatusCode, message: String },
+    /// multipart フォームの読み取り自体に失敗 (不正な境界・サイズ超過等)。
+    #[error("{message}")]
+    InvalidMultipart { status: StatusCode, message: String },
+    /// multipart は読めたがフィールドの内容が不正 (ファイル未指定・`direction` の値が
+    /// `left`/`right` 以外等)。
+    #[error("{message}")]
+    BadRequest { message: String },
+    /// アップロードされたファイルを PDF として処理できなかった
+    /// (壊れている・パスワード付きで復号できない・ページが無い等)。
+    #[error("{message}")]
+    PdfProcessing { message: String },
 }
 
 impl AppError {
@@ -37,6 +48,11 @@ impl AppError {
             Self::Database(_) => (StatusCode::SERVICE_UNAVAILABLE, "database_unavailable"),
             Self::InvalidJson { status, .. } => (*status, "invalid_request_body"),
             Self::InvalidPath { status, .. } => (*status, "invalid_path"),
+            Self::InvalidMultipart { status, .. } => (*status, "invalid_multipart"),
+            Self::BadRequest { .. } => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::PdfProcessing { .. } => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "pdf_processing_failed")
+            }
         }
     }
 }

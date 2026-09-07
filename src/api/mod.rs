@@ -1,6 +1,7 @@
 //! `/api/v1` 配下の HTTP API と OpenAPI ドキュメント。
 
 mod health;
+mod pdf;
 
 use utoipa::openapi::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
@@ -25,6 +26,7 @@ struct ApiDoc;
 pub fn router() -> OpenApiRouter<AppState> {
     let v1 = OpenApiRouter::new()
         .merge(health::router())
+        .merge(pdf::router())
         .fallback(|| async { AppError::NotFound });
 
     OpenApiRouter::with_openapi(<ApiDoc as utoipa::OpenApi>::openapi()).nest("/api/v1", v1)

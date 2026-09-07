@@ -128,6 +128,9 @@ pub fn create_owner_only_dir(path: &Path) -> std::io::Result<()> {
 pub struct ServerConfig {
     pub bind: IpAddr,
     pub port: u16,
+    /// リクエストボディの最大バイト数。PDFアップロードを受け付けるエンドポイント向けで、
+    /// axum のデフォルト (2MB) はスキャン画像を含むPDFには小さすぎるため引き上げている。
+    pub max_upload_bytes: usize,
 }
 
 impl Default for ServerConfig {
@@ -137,6 +140,7 @@ impl Default for ServerConfig {
         Self {
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 3000,
+            max_upload_bytes: 200 * 1024 * 1024,
         }
     }
 }
@@ -226,6 +230,10 @@ mod tests {
         let config: Config = toml::from_str(text).expect("config.example.toml should parse");
         assert_eq!(config.server.bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_eq!(config.server.port, 3000);
+        assert_eq!(
+            config.server.max_upload_bytes,
+            ServerConfig::default().max_upload_bytes
+        );
         assert_eq!(config.log.filter, LogConfig::default().filter);
         assert_eq!(config.log.output, LogOutput::Stdout);
     }

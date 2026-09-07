@@ -25,6 +25,10 @@ backend and a SvelteKit frontend into a single binary).
   document). The page-reordering algorithm itself is a verbatim port of the old
   `SaddleStitcher.py`; its correctness was not re-verified or "fixed" (the old README
   itself notes that the right-open page order was never confirmed)
+- Pages with `/Rotate` (a display-rotation flag) are rejected with an explicit error,
+  rather than silently producing a wrongly-oriented output (the Form-XObject-based
+  placement can't reproduce the rotation). Per-page decompressed content is also capped
+  at 100MiB as a defense against decompression bombs
 
 ## Usage
 

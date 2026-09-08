@@ -16,7 +16,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # `tray` feature (タスクトレイ常駐モード) が使う tao/tray-icon の Linux ビルドに必要。
       # feature 自体は既定で無効な場合もあるが、`create-rustvelte --tray` で有効化した
@@ -58,7 +58,7 @@ jobs:
   ci-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:

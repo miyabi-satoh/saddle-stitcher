@@ -15,19 +15,23 @@ fn main() {
         return;
     }
 
-    let dirs = AppDirs::resolve().unwrap_or_else(|err| exit_with_error(&err));
-    let config = Config::load(&dirs).unwrap_or_else(|err| exit_with_error(&err));
+    let dirs = AppDirs::resolve().unwrap_or_else(|err| exit_with_error(&err, None));
+    let config = Config::load(&dirs).unwrap_or_else(|err| exit_with_error(&err, None));
 
-    // `WorkerGuard` は非同期書き込みワーカーの生存期間を握っている。drop するとバッファ中の
-    // ログがフラッシュされずに消える。
-    // tray 無効時は `main` の終わりまで保持し続ける。tray 有効時は `tray::run` に所有権を渡し、
-    // 終了メニュー選択時に明示的に drop する (`tao` のイベントループは正常終了時も `-> !` で
-    // 戻ってこないため、`main` に持たせたままでは flush されない)。
-    #[cfg_attr(not(feature = "tray"), allow(unused_variables))]
-    let log_guard = logging::init(&config.log, &dirs.log_dir()).unwrap_or_else(|err| {
-        eprintln!("ログ初期化に失敗しました: {err}");
-        std::process::exit(1);
-    });
+    // `WorkerGuard` は非同期書き込みワーカーの生存期間を握っている。drop されるとバッファ中の
+    // ログがフラッシュされる。逆に drop されないままプロセスが終了すると、バッファ中のログは
+    // フラッシュされずに消える。
+    // `std::process::exit` を経由する終了パス (異常系) ではデストラクタが走らないため、
+    // `Option` で保持して各終了パスで明示的に `take()` して drop する。
+    // tray 無効時、正常系では `main` の終わりまで保持し続ける。tray 有効時は `tray::run` に
+    // 所有権を渡し、終了メニュー選択時に明示的に drop する (`tao` のイベントループは正常終了時も
+    // `-> !` で戻ってこないため、`main` に持たせたままでは flush されない)。
+    let mut log_guard = Some(
+        logging::init(&config.log, &dirs.log_dir()).unwrap_or_else(|err| {
+            eprintln!("ログ初期化に失敗しました: {err}");
+            std::process::exit(1);
+        }),
+    );
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -45,13 +49,13 @@ fn main() {
         Ok(None) => {
             tracing::error!("既に起動しています (別プロセスが常駐中です)");
             eprintln!("既に起動しています (別プロセスが常駐中です)");
-            drop(log_guard);
+            drop(log_guard.take());
             std::process::exit(1);
         }
         Err(err) => {
             tracing::error!(%err, "シングルインスタンスロックの取得に失敗しました");
             eprintln!("シングルインスタンスロックの取得に失敗しました: {err}");
-            drop(log_guard);
+            drop(log_guard.take());
             std::process::exit(1);
         }
     };
@@ -64,10 +68,10 @@ fn main() {
             let db_path = dirs.db_path();
             let pool = db::connect(&db_path)
                 .await
-                .unwrap_or_else(|err| exit_with_error(&err));
+                .unwrap_or_else(|err| exit_with_error(&err, log_guard.take()));
             db::migrate(&pool)
                 .await
-                .unwrap_or_else(|err| exit_with_error(&err));
+                .unwrap_or_else(|err| exit_with_error(&err, log_guard.take()));
             tracing::info!(db_path = %db_path.display(), "データベースに接続しました");
             saddle_stitcher::build_app(pool, config.server.max_upload_bytes)
         })
@@ -76,7 +80,11 @@ fn main() {
     let addr = config.server.socket_addr();
 
     #[cfg(feature = "tray")]
-    tray::run(addr, log_guard, app);
+    tray::run(
+        addr,
+        log_guard.take().expect("log_guard is still held here"),
+        app,
+    );
 
     #[cfg(not(feature = "tray"))]
     {
@@ -85,12 +93,14 @@ fn main() {
             let listener = TcpListener::bind(addr).await.unwrap_or_else(|err| {
                 tracing::error!(%addr, %err, "サーバーのポート bind に失敗しました");
                 eprintln!("サーバーのポート bind に失敗しました ({addr}): {err}");
+                drop(log_guard.take());
                 std::process::exit(1);
             });
             tracing::info!("listening on http://{addr}");
 
             if let Err(err) = axum::serve(listener, app).await {
                 tracing::error!(%err, "サーバーが異常終了しました");
+                drop(log_guard.take());
                 std::process::exit(1);
             }
         });
@@ -101,7 +111,13 @@ fn main() {
 /// `thiserror` の `#[error(...)]` は最上位のメッセージしか出さないため、
 /// `toml::de::Error` が持つ行番号等の詳細を落とさないように辿る。
 /// ログはまだ有効化されていない場合もあるため、stderr にも必ず出す。
-fn exit_with_error(err: &(dyn std::error::Error + 'static)) -> ! {
+///
+/// `log_guard` を受け取って `std::process::exit` の前に drop することで、非同期ログ
+/// ワーカーのバッファをフラッシュしてから終了する (`log_guard` 生成前の呼び出しは `None`)。
+fn exit_with_error(
+    err: &(dyn std::error::Error + 'static),
+    log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+) -> ! {
     let mut chain = err.to_string();
     let mut source = err.source();
     while let Some(err) = source {
@@ -111,5 +127,6 @@ fn exit_with_error(err: &(dyn std::error::Error + 'static)) -> ! {
     }
     tracing::error!("{chain}");
     eprintln!("{chain}");
+    drop(log_guard);
     std::process::exit(1);
 }

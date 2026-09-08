@@ -32,7 +32,7 @@ backend and a SvelteKit frontend into a single binary).
 
 ## Usage
 
-Start the server with `make run` (or the distributed binary) and open
+Start the server with `just run` (or the distributed binary) and open
 `http://127.0.0.1:3000` in a browser. Pick a PDF file and an open direction (left/right),
 click "convert", and the saddle-stitch-layout PDF downloads.
 
@@ -67,21 +67,21 @@ present but unused by this app.
 ## Setup
 
 ```sh
-make install   # install frontend dependencies (pnpm)
+just install   # install frontend dependencies (pnpm)
 ```
 
 ## Development
 
 ```sh
-make dev-backend   # start the backend (:3000, builds the frontend once on first run)
-make dev-frontend  # start the frontend with HMR (/api is proxied to the backend)
+just dev-backend   # start the backend (:3000, builds the frontend once on first run)
+just dev-frontend  # start the frontend with HMR (/api is proxied to the backend)
 ```
 
 ## Build / Run
 
 ```sh
-make build  # build the frontend, then build the release binary
-make run    # build, then run the binary
+just build  # build the frontend, then build the release binary
+just run    # build, then run the binary
 ```
 
 ## CLI
@@ -152,7 +152,7 @@ config options and defaults.
 
 Everything lives under `/api/v1`. See `openapi.json` (checked in) for the spec. After
 changing the API, regenerate and commit `openapi.json` and
-`frontend/src/lib/api/schema.d.ts` with `make api-types`.
+`frontend/src/lib/api/schema.d.ts` with `just api-types`.
 
 Errors are always returned as `{"error":{"code":"...","message":"..."}}`.
 
@@ -164,17 +164,17 @@ Errors are always returned as `{"error":{"code":"...","message":"..."}}`.
 ## Other commands
 
 ```sh
-make openapi    # generate openapi.json
-make api-types  # generate frontend TypeScript types from openapi.json
-make fmt        # format code (cargo fmt + prettier)
-make lint       # lint (clippy + eslint/prettier check)
-make check      # type-check (cargo check + svelte-check)
-make test       # run tests (cargo test + vitest)
-make ci         # run fmt-check → lint → check → test → build in sequence
-make clean      # remove build output
+just openapi    # generate openapi.json
+just api-types  # generate frontend TypeScript types from openapi.json
+just fmt        # format code (cargo fmt + prettier)
+just lint       # lint (clippy + eslint/prettier check)
+just check      # type-check (cargo check + svelte-check)
+just test       # run tests (cargo test + vitest)
+just ci         # run fmt-check → lint → check → test → build in sequence
+just clean      # remove build output
 ```
 
-You can also see the full command list with `make help`.
+You can also see the full command list with `just --list`.
 
 ## What this template does not include (out of scope)
 

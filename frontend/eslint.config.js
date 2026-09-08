@@ -11,7 +11,7 @@ const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	{
-		// openapi-typescript が生成する型定義 (make api-types で再生成されるので対象外)
+		// openapi-typescript が生成する型定義 (just api-types で再生成されるので対象外)
 		ignores: ['src/lib/api/schema.d.ts']
 	},
 	js.configs.recommended,

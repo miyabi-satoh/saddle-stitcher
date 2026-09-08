@@ -70,8 +70,10 @@ just install   # frontend の依存関係をインストール (pnpm)
 ## 開発
 
 ```sh
-just dev-backend   # backend を起動 (:3000, 初回のみ frontend をビルド)
-just dev-frontend  # frontend を HMR 付きで起動 (/api は backend にプロキシ)
+just dev            # backend + frontend をまとめて起動 (concurrently でラベル付き出力)
+just dev-backend    # backend のみ起動 (:3000, 初回のみ frontend をビルド)
+just dev-backend --openapi  # 同上、バイナリへ引数を透過する (--openapi, -v 等)
+just dev-frontend   # frontend のみ HMR 付きで起動 (/api は backend にプロキシ)
 ```
 
 ## ビルド・実行

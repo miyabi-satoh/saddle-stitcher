@@ -73,8 +73,10 @@ just install   # install frontend dependencies (pnpm)
 ## Development
 
 ```sh
-just dev-backend   # start the backend (:3000, builds the frontend once on first run)
-just dev-frontend  # start the frontend with HMR (/api is proxied to the backend)
+just dev            # start backend + frontend together (labeled output via concurrently)
+just dev-backend    # start only the backend (:3000, builds the frontend once on first run)
+just dev-backend --openapi  # same, but forward args to the binary (e.g. --openapi, -v)
+just dev-frontend   # start only the frontend with HMR (/api is proxied to the backend)
 ```
 
 ## Build / Run

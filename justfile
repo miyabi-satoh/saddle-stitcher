@@ -27,13 +27,17 @@ run: build
 ensure-frontend-build:
     @{{ if path_exists(justfile_directory() / frontend_dir / "build") == "true" { "echo frontend/build exists" } else { "just frontend-build" } }}
 
-# backend を開発モードで起動 (frontend/build/ が無ければ初回のみビルド)
-dev-backend: ensure-frontend-build
-    cargo run
+# backend を開発モードで引数付きで起動する (無指定ならサーバー起動、--openapi/-v等も渡せる。frontend/build/ が無ければ初回のみビルド)
+dev-backend *args: ensure-frontend-build
+    cargo run -- {{ args }}
 
 # frontend を開発モードで起動 (HMR, /api は backend にプロキシ)
 dev-frontend:
     cd {{ frontend_dir }} && pnpm run dev
+
+# backend/frontend をまとめて起動する (concurrently でラベル付き・1ターミナルに集約)
+dev:
+    cd {{ frontend_dir }} && pnpm exec concurrently -n backend,frontend -c blue,green "just dev-backend" "just dev-frontend"
 
 # OpenAPI仕様(openapi.json)をサーバー起動なしで生成する
 openapi:

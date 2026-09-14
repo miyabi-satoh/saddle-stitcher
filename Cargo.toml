@@ -23,7 +23,7 @@ tray = ["dep:tao", "dep:tray-icon", "dep:open", "dep:windows", "dep:auto-launch"
 auto-launch = { version = "0.6.0", optional = true }
 axum = { version = "0.8.9", features = ["multipart"] }
 directories = "6.0.0"
-lopdf = "0.44.0"
+lopdf = "0.45.0"
 mime_guess = "2.0.5"
 open = { version = "5.4.3", optional = true }
 percent-encoding = "2.3.2"

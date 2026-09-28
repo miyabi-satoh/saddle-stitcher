@@ -40,7 +40,7 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tray-icon = { version = "0.24.2", optional = true }
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
-utoipa-axum = "0.2.0"
+utoipa-axum = "0.3.0"
 
 # `tray` feature でのみ使う (Windows でタスクトレイ常駐時にコンソールを切り離すため)。
 # 非 Windows ターゲットではこの依存自体が存在しないため、`tray` feature の
